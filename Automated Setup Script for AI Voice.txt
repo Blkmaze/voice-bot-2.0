@@ -1,0 +1,53 @@
+**organize.js** (Cross-Platform File Organizer for Next.js App Router)
+
+Place this file at the root of your `ai-voice-bot` project and run `node organize.js` to automatically move your files into the correct `src/app` and `src/hooks` directories.
+
+```js
+// organize.js
+const fs = require('fs');
+const path = require('path');
+
+const root = __dirname;
+const srcApp = path.join(root, 'src', 'app');
+const srcHooks = path.join(root, 'src', 'hooks');
+
+// Ensure directories exist
+[srcApp, srcHooks].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`Created directory: ${dir}`);
+  }
+});
+
+// Helper to move file if exists
+function moveIfExists(filename, destDir) {
+  const srcPath = path.join(root, filename);
+  if (fs.existsSync(srcPath)) {
+    const destPath = path.join(destDir, filename);
+    fs.renameSync(srcPath, destPath);
+    console.log(`Moved ${filename} to ${destDir}`);
+  }
+}
+
+// Move files
+moveIfExists('globals.css', srcApp);
+moveIfExists('layout.tsx', srcApp);
+moveIfExists('page.tsx', srcApp);
+moveIfExists('useVoice.ts', srcHooks);
+moveIfExists('useVoice.js', srcHooks); // in case you have JS version
+
+console.log('Organization complete. Please restart your Next.js dev server with `npm run dev`.');
+```
+
+**Usage:**
+```bash
+# From project root:
+node organize.js
+npm run dev
+```
+
+This script ensures:
+- `globals.css`, `layout.tsx`, and `page.tsx` end up in `src/app`
+- `useVoice.ts` (or `useVoice.js`) ends up in `src/hooks`
+
+After running, your imports like `import { useVoice } from '../hooks/useVoice';` will resolve correctly.

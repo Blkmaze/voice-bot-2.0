@@ -1,0 +1,26 @@
+
+> ai-voice-bot@0.1.0 build
+> next build
+
+   ▲ Next.js 15.3.2
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 5.0s
+   Skipping validation of types
+   Skipping linting
+   Collecting page data ...
+   Generating static pages (0/4) ...
+Error occurred prerendering page "/". Read more: https://nextjs.org/docs/messages/prerender-error
+ReferenceError: tion is not defined
+    at 5694 (/mnt/c/frontend/ai-voice-bot/.next/server/app/page.js:1:3021)
+    at Object.t [as require] (/mnt/c/frontend/ai-voice-bot/.next/server/webpack-runtime.js:1:127)
+    at require (/mnt/c/frontend/ai-voice-bot/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:140:10304)
+    at u (/mnt/c/frontend/ai-voice-bot/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:92:646)
+    at U (/mnt/c/frontend/ai-voice-bot/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:92:10632)
+    at W (/mnt/c/frontend/ai-voice-bot/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:92:13339)
+    at /mnt/c/frontend/ai-voice-bot/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:92:15629
+    at Z._fromJSON (/mnt/c/frontend/ai-voice-bot/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:92:15663)
+    at JSON.parse (<anonymous>)
+    at L (/mnt/c/frontend/ai-voice-bot/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:92:10356)
+Export encountered an error on /page: /, exiting the build.
+ ⨯ Next.js build worker exited with code: 1 and signal: null

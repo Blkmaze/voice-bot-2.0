@@ -3,13 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "patch:voice": "node scripts/patch-page.js",
+    "predev": "npm run patch:voice",
     "dev": "next dev --turbopack",
+    "prebuild": "npm run patch:voice",
     "build": "next build",
+    "prestart": "npm run patch:voice",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "setup-all": "node scripts/setup-all.js"
   },
   "dependencies": {
     "next": "15.3.2",
+    "openai": "^4.103.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-speech-recognition": "^4.0.1",

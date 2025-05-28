@@ -1,0 +1,237 @@
+param(
+  [string]$OpenAiKey     = $(Read-Host -Prompt "Enter your OpenAI secret key (sk-... without 'proj')"),
+  [string]$WeatherApiKey = $(Read-Host -Prompt "Enter your OpenWeatherMap API key"),
+  [string]$EmailPass     = $(Read-Host -AsSecureString -Prompt "Enter app-specific password for willie.mayes@gmail.com")
+)
+
+# Constants
+$EmailHost  = 'imap.gmail.com'
+$EmailPort  = 993
+$EmailUser  = 'willie.mayes@gmail.com'
+$SmtpHost   = 'smtp.gmail.com'
+$SmtpPort   = 465
+$SmtpSecure = $true
+
+# Move to project root
+$projectRoot = Resolve-Path "$PSScriptRoot\.."
+Set-Location $projectRoot
+
+# 1) Write .env.local
+@"
+OPENAI_API_KEY=$OpenAiKey
+WEATHER_API_KEY=$WeatherApiKey
+EMAIL_HOST=$EmailHost
+EMAIL_PORT=$EmailPort
+EMAIL_USER=$EmailUser
+EMAIL_PASS=$(ConvertFrom-SecureString $EmailPass -AsPlainText)
+SMTP_HOST=$SmtpHost
+SMTP_PORT=$SmtpPort
+SMTP_SECURE=$SmtpSecure
+SMTP_USER=$EmailUser
+SMTP_PASS=$(ConvertFrom-SecureString $EmailPass -AsPlainText)
+"@ | Out-File -FilePath ".env.local" -Encoding utf8
+Write-Host "✔ .env.local created"
+
+# 2) Install dependencies
+Write-Host "Installing npm dependencies..."
+npm install openai imap-simple mailparser nodemailer react-speech-recognition --save
+Write-Host "✔ Dependencies installed"
+
+# 3) Scaffold API routes
+# 3a) /api/ask
+$askDir = "src/app/api/ask"
+New-Item -ItemType Directory -Path $askDir -Force | Out-Null
+@"
+import { NextResponse } from 'next/server'
+import OpenAI from 'openai'
+
+export async function POST(req: Request) {
+  const { question } = await req.json()
+  if (!question) return NextResponse.json({ error: 'No question' }, { status: 400 })
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+  const chat   = await client.chat.completions.create({ model: 'gpt-4o-mini', messages: [
+    { role: 'system', content: 'You are a helpful assistant.' },
+    { role: 'user',   content: question }
+  ] })
+  const answer = chat.choices?.[0]?.message?.content || 'Sorry, I have no answer.'
+  return NextResponse.json({ answer })
+}
+"@ | Out-File "$askDir/route.ts" -Encoding utf8
+Write-Host "✔ /api/ask route created"
+
+# 3b) /api/weather
+$weatherDir = "src/app/api/weather"
+New-Item -ItemType Directory -Path $weatherDir -Force | Out-Null
+@"
+import { NextRequest, NextResponse } from 'next/server'
+
+export async function GET(req: NextRequest) {
+  const city = new URL(req.url).searchParams.get('city') || 'New York'
+  const res  = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${process.env.WEATHER_API_KEY}&units=imperial`)
+  if (!res.ok) return NextResponse.json({ error: res.statusText }, { status: res.status })
+  const d = await res.json()
+  const summary = `${d.name}: ${d.weather[0].description}, ${Math.round(d.main.temp)}°F, humidity ${d.main.humidity}%`
+  return NextResponse.json({ summary })
+}
+"@ | Out-File "$weatherDir/route.ts" -Encoding utf8
+Write-Host "✔ /api/weather route created"
+
+# 3c) /api/emails GET (read unseen + delete Trash)
+$emailsDir = "src/app/api/emails"
+New-Item -ItemType Directory -Path $emailsDir -Force | Out-Null
+@"
+import { NextResponse } from 'next/server'
+import imaps from 'imap-simple'
+
+export async function GET() {
+  const cfg = { imap: { user: process.env.EMAIL_USER!, password: process.env.EMAIL_PASS!, host: process.env.EMAIL_HOST!, port: Number(process.env.EMAIL_PORT!), tls: true, authTimeout: 3000 } }
+  const conn = await imaps.connect(cfg)
+  await conn.openBox('INBOX')
+  const msgs = await conn.search(['UNSEEN'], { bodies: ['HEADER.FIELDS (FROM SUBJECT DATE)'], markSeen: true })
+  const emails = await Promise.all(msgs.map(async m => { const h = m.parts[0].body; return { from: h.from[0], subject: h.subject[0], date: h.date[0] } }))
+  await conn.openBox('[Gmail]/Trash')
+  const trash = await conn.search(['ALL'], { bodies: [] })
+  const uids = trash.map(t => t.attributes.uid)
+  if (uids.length) { await conn.addFlags(uids, '\\Deleted'); await conn.expunge() }
+  await conn.end()
+  return NextResponse.json({ emails })
+}
+"@ | Out-File "$emailsDir/route.ts" -Encoding utf8
+Write-Host "✔ /api/emails GET route created"
+
+# 3d) /api/emails/send POST
+$sendDir = "$emailsDir/send"
+New-Item -ItemType Directory -Path $sendDir -Force | Out-Null
+@"
+import { NextResponse } from 'next/server'
+import nodemailer from 'nodemailer'
+
+export async function POST(req: Request) {
+  const { to, subject, text } = await req.json()
+  const transporter = nodemailer.createTransport({ host: process.env.SMTP_HOST!, port: Number(process.env.SMTP_PORT!), secure: process.env.SMTP_SECURE === 'true', auth: { user: process.env.SMTP_USER!, pass: process.env.SMTP_PASS! } })
+  await transporter.sendMail({ from: process.env.SMTP_USER!, to, subject, text })
+  return NextResponse.json({ ok: true })
+}
+"@ | Out-File "$sendDir/route.ts" -Encoding utf8
+Write-Host "✔ /api/emails/send route created"
+
+# 4) Overwrite src/app/page.tsx with multi-intent UI + Stop button
+$pagePath = "src/app/page.tsx"
+@"
+'use client'
+import { useState, useRef, useEffect } from 'react'
+
+function speak(text: string) {
+  const synth = window.speechSynthesis
+  const voices = synth.getVoices()
+  const female = voices.find(v => /female/i.test(v.name)) || voices.find(v => /^en(-|$)/i.test(v.lang)) || voices[0]
+  const utter = new SpeechSynthesisUtterance(text)
+  if (female) utter.voice = female
+  synth.speak(utter)
+}
+
+export default function Page() {
+  const [answer, setAnswer] = useState<string>()
+  const [error, setError]   = useState<string>()
+  const recognitionRef      = useRef<any>()
+
+  // Stop recognition and speech
+  const handleStop = () => {
+    recognitionRef.current?.stop()
+    window.speechSynthesis.cancel()
+  }
+
+  // Start listening for voice commands
+  const startListening = () => {
+    setError(undefined)
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) return setError('SpeechRecognition not supported')
+    const r = new SR()
+    recognitionRef.current = r
+    r.lang = 'en-US'
+    r.interimResults = false
+    r.maxAlternatives = 1
+
+    r.onresult = async (e: any) => {
+      const q = e.results[0][0].transcript.trim().toLowerCase()
+      let reply = ''
+      try {
+        if (q.includes('what time')) {
+          reply = 'The time is ' + new Date().toLocaleTimeString()
+        } else if (q.includes('weather')) {
+          const city = q.match(/weather in ([a-z ]+)/)?.[1] || 'New York'
+          const res = await fetch(`/api/weather?city=${encodeURIComponent(city)}`)
+          const d   = await res.json()
+          reply     = d.summary
+        } else if (q.includes('read unseen emails')) {
+          const { emails } = await (await fetch('/api/emails')).json()
+          if (!emails.length) {
+            reply = 'You have no unread emails.'
+          } else {
+            reply = emails.map((em: any, i: number) => `Email ${i+1} from ${em.from}: ${em.subject}`).join('. ')
+          }
+        } else if (q.match(/reply to email (\d+)/)) {
+          const idx  = Number(q.match(/reply to email (\d+)/)[1]) - 1
+          const { emails } = await (await fetch('/api/emails')).json()
+          const to   = emails[idx]?.from
+          const sub  = 'Re: ' + emails[idx]?.subject
+          // Prompt for reply content
+          const content = prompt('What is your reply?') || ''
+          await fetch('/api/emails/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to, subject: sub, text: content })
+          })
+          reply = 'Your reply has been sent.'
+        } else if (q.match(/search for (.+)/)) {
+          const term = q.match(/search for (.+)/)[1]
+          window.open(`https://www.google.com/search?q=${encodeURIComponent(term)}`, '_blank')
+          reply = `Searching online for ${term}`
+        } else {
+          // Fallback to AI Q&A
+          const res = await fetch('/api/ask', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: q })
+          })
+          const json = await res.json()
+          reply = json.answer
+        }
+        setAnswer(reply)
+        speak(reply)
+      } catch (err: any) {
+        setError(err.message)
+        speak(err.message)
+      }
+    }
+    r.onerror = (e: any) => setError(e.error || e.message)
+    r.start()
+  }
+
+  useEffect(() => {
+    window.speechSynthesis.getVoices()
+  }, [])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 24 }}>
+      <div style={{ display: 'flex', gap: '1rem' }}>
+        <button onClick={startListening} style={{ padding: '1rem 2rem', fontSize: '1.25rem' }}>🎤 Speak Now</button>
+        <button onClick={handleStop} style={{ padding: '1rem 2rem', fontSize: '1.25rem', backgroundColor: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px' }}>🛑 Stop</button>
+      </div>
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {answer && <div style={{ padding: 16, border: '1px solid #ddd', borderRadius: 8, maxWidth: 600, textAlign: 'center' }}><p>{answer}</p></div>}
+    </div>
+  )
+}
+"@ | Out-File -FilePath $pagePath -Encoding utf8
+Write-Host "✔ page.tsx updated with email commands and Stop button"
+
+# 5) Update package.json scripts
+$pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
+$pkg.scripts['dev']   = 'next dev'
+$pkg.scripts['build'] = 'next build'
+$pkg.scripts['start'] = 'next start'
+$pkg | ConvertTo-Json -Depth 5 | Out-File 'package.json' -Encoding utf8
+Write-Host "✔ package.json updated"
+
+Write-Host "🎉 Email automation & Stop button setup complete! Run 'npm run dev'."

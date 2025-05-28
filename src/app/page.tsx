@@ -1,54 +1,82 @@
-// src/app/page.tsx
-'use client';
+'use client'
+import { useState } from 'react'
 
-import { useState, useEffect, useRef } from 'react';
+export default function Page() {
+  const [answer, setAnswer] = useState<string>()
+  const [error, setError]   = useState<string>()
 
-export default function HomePage() {
-  const [text, setText] = useState('');
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  function startListening() {
+    setError(undefined)
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) return setError('SpeechRecognition not supported')
+    const r = new SR()
+    r.lang            = 'en-US'
+    r.interimResults  = false
+    r.maxAlternatives = 1
 
-  // Initialize SpeechRecognition once, on mount
-  useEffect(() => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      console.warn('SpeechRecognition API not supported in this browser');
-      return;
+    r.onresult = (event: any) => {
+      console.log('🗣️ Speech event:', event)
+      ;(async () => {
+        try {
+          const transcript = Array.from(event.results)
+            .map((res: any) => res[0].transcript)
+            .join('')
+            .trim()
+          console.log('📝 Transcript:', transcript)
+
+          const res = await fetch('/api/ask', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: transcript }),
+          })
+          console.log('🔍 API status:', res.status)
+          const text = await res.text()
+          if (!res.ok) {
+            console.error('🚨 API error body:', text)
+            throw new Error('HTTP ' + res.status + ' – ' + (text||'(empty)'))
+          }
+          const data = JSON.parse(text)
+          const ai = data.answer || ''
+          console.log('🤖 Bot replied:', ai)
+
+          setAnswer(ai)
+          speechSynthesis.speak(new SpeechSynthesisUtterance(ai))
+        } catch (err: any) {
+          console.error('❌ Error in onresult:', err)
+          setError(err.message || 'Something went wrong')
+          setAnswer(undefined)
+        }
+      })()
     }
-    const recognition = new SR();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognitionRef.current = recognition;
-  }, []);
 
-  const startListening = () => {
-    const recognition = recognitionRef.current;
-    if (!recognition) {
-      alert('Speech Recognition API not available');
-      return;
+    r.onerror = (e: any) => {
+      console.error('🎙️ SpeechRecognition error:', e.error||e.message)
+      setError(e.error||e.message)
     }
-    recognition.onstart = () => console.log('🎙️ Listening started');
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const transcript = event.results[0][0].transcript;
-      console.log('📝 Result:', transcript);
-      setText(transcript);
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(transcript));
-    };
-    recognition.onerror = (e: any) => console.error('❌ Error:', e.error);
-    recognition.onend = () => console.log('🛑 Listening ended');
-    recognition.start();
-  };
+
+    r.start()
+  }
 
   return (
-    <main style={{ padding: '2rem' }}>
-      <h1>🎙️ AI Friend Voice Test</h1>
-      <button onClick={startListening} style={{ padding: '0.5rem 1rem', fontSize: '1rem' }}>
-        Start Listening
+    <div style={{
+      display:'flex',flexDirection:'column',
+      alignItems:'center',justifyContent:'center',
+      height:'100vh',gap:24
+    }}>
+      <button
+        onClick={startListening}
+        style={{padding:'1rem 2rem',fontSize:'1.25rem'}}
+      >
+        🎤 Speak Now
       </button>
-      {text && (
-        <p style={{ marginTop: '1rem' }}>
-          <strong>You said:</strong> {text}
-        </p>
+      {error  && <p style={{color:'red'}}>{error}</p>}
+      {answer && (
+        <div style={{
+          padding:16,border:'1px solid #ddd',borderRadius:8
+        }}>
+          <p>{answer}</p>
+        </div>
       )}
-    </main>
-  );
+    </div>
+  )
 }

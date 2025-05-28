@@ -1,0 +1,31 @@
+import { NextRequest, NextResponse } from 'next/server'
+
+export async function GET(request: NextRequest) {
+  const url = new URL(request.url)
+  const city = url.searchParams.get('city') || 'New York'
+  const key = process.env.WEATHER_API_KEY
+
+  // Build the API URL using string concatenation
+  const apiUrl =
+    'https://api.openweathermap.org/data/2.5/weather?q=' +
+    encodeURIComponent(city) +
+    '&appid=' + key +
+    '&units=imperial'
+
+  const weatherRes = await fetch(apiUrl)
+  if (!weatherRes.ok) {
+    return NextResponse.json(
+      { error: weatherRes.statusText },
+      { status: weatherRes.status }
+    )
+  }
+
+  const data = await weatherRes.json()
+  const summary =
+    data.name + ': ' +
+    data.weather[0].description + ', temp ' +
+    Math.round(data.main.temp) + '°F, humidity ' +
+    data.main.humidity + '%'
+
+  return NextResponse.json({ summary })
+}
